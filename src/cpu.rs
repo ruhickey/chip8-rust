@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(non_snake_case)]
 
 pub const FONT_OFFSET: usize = 0x50;
 pub const ROM_OFFSET: usize = 0x200;
@@ -255,10 +256,28 @@ impl CPU {
         return Ok(IncrementPc);
     }
 
+    fn store_vx_values(&mut self, opcode: u16) -> Result<STATE, String> {
+        let n = nibble_from_short(opcode, 1)?;
+        for i in 0..(n + 1) {
+            self.memory[self.registers.i + i as usize] = self.registers.v[i as usize];
+        }
+        return Ok(IncrementPc);
+    }
+
+    fn read_vx_values(&mut self, opcode: u16) -> Result<STATE, String> {
+        let n = nibble_from_short(opcode, 1)?;
+        for i in 0..(n + 1) {
+            self.registers.v[i as usize] = self.memory[self.registers.i + i as usize];
+        }
+        return Ok(IncrementPc);
+    }
+
     fn load_routines(&mut self, opcode: u16) -> Result<STATE, String> {
         let op = byte_from_short(opcode, 1)?;
         return match op {
             0x33 => self.store_bcd_repr(opcode),
+            0x55 => self.read_vx_values(opcode),
+            0x65 => self.store_vx_values(opcode),
             _ => self.unknown_opcode(opcode)
         }
     }
@@ -322,7 +341,7 @@ impl CPU {
 mod tests {
     use super::*;
 
-    #[test]
+    #[test] // 00E0
     fn test_clear_screen() {
         let mut cpu = CPU::new();
         cpu.screen = [1; 2048];
@@ -330,23 +349,7 @@ mod tests {
         assert_eq!(cpu.screen, [0; 2048]);
     }
 
-    #[test]
-    fn test_jump() {
-        let mut cpu = CPU::new();
-        cpu.run_opcode(0x1157).expect("opcode error");
-        assert_eq!(cpu.registers.pc, 0x157);
-    }
-
-    #[test]
-    fn test_enter_subroutine() {
-        let mut cpu = CPU::new();
-        let pc = cpu.registers.pc;
-        cpu.run_opcode(0x2157).expect("opcode error");
-        assert_eq!(cpu.registers.pc, 0x157);
-        assert_eq!(cpu.stack[0], pc);
-    }
-
-    #[test]
+    #[test] // 00EE
     fn test_return_subroutine() {
         let mut cpu = CPU::new();
         let pc = cpu.registers.pc;
@@ -355,7 +358,23 @@ mod tests {
         assert_eq!(cpu.registers.pc, pc);
     }
 
-    #[test]
+    #[test] // 1nnn
+    fn test_jump() {
+        let mut cpu = CPU::new();
+        cpu.run_opcode(0x1157).expect("opcode error");
+        assert_eq!(cpu.registers.pc, 0x157);
+    }
+
+    #[test] // 2nnn
+    fn test_enter_subroutine() {
+        let mut cpu = CPU::new();
+        let pc = cpu.registers.pc;
+        cpu.run_opcode(0x2157).expect("opcode error");
+        assert_eq!(cpu.registers.pc, 0x157);
+        assert_eq!(cpu.stack[0], pc);
+    }
+
+    #[test] // 3xkk
     fn test_skip_vx_equal() {
         let mut cpu = CPU::new();
         cpu.registers.v[0xA] = 0xCC;
@@ -367,7 +386,7 @@ mod tests {
         assert_eq!(increment, NoIncrementPc);
     }
 
-    #[test]
+    #[test] // 4xkk
     fn test_skip_vx_not_equal() {
         let mut cpu = CPU::new();
         cpu.registers.v[0xA] = 0xCC;
@@ -379,7 +398,7 @@ mod tests {
         assert_eq!(increment, IncrementPc);
     }
 
-    #[test]
+    #[test] // 5xy0
     fn test_skip_vx_equal_vy() {
         let mut cpu = CPU::new();
         cpu.registers.v[0xA] = 0xCC;
@@ -393,14 +412,14 @@ mod tests {
         assert_eq!(increment, NoIncrementPc);
     }
 
-    #[test]
+    #[test] // 6xkk
     fn test_set_vx_to_kk() {
         let mut cpu = CPU::new();
         cpu.run_opcode(0x6ACC).expect("opcode error");
         assert_eq!(cpu.registers.v[0xA], 0xCC);
     }
 
-    #[test]
+    #[test] // 7xkk
     fn test_add_kk_to_vx() {
         let mut cpu = CPU::new();
         cpu.registers.v[0xA] = 0x20;
@@ -408,7 +427,7 @@ mod tests {
         assert_eq!(cpu.registers.v[0xA], 0x22);
     }
 
-    #[test]
+    #[test] // 8xy0
     fn test_set_vx_to_vy() {
         let mut cpu = CPU::new();
         cpu.registers.v[0xB] = 0x20;
@@ -416,7 +435,7 @@ mod tests {
         assert_eq!(cpu.registers.v[0xA], 0x20);
     }
 
-    #[test]
+    #[test] // 8xy1
     fn test_or_vx_vy() {
         let mut cpu = CPU::new();
         cpu.registers.v[0xA] = 0x0;
@@ -425,7 +444,7 @@ mod tests {
         assert_eq!(cpu.registers.v[0xA], 0x1);
     }
 
-    #[test]
+    #[test] // 8xy2
     fn test_and_vx_vy() {
         let mut cpu = CPU::new();
         cpu.registers.v[0xA] = 0x3;
@@ -434,7 +453,7 @@ mod tests {
         assert_eq!(cpu.registers.v[0xA], 0x1);
     }
 
-    #[test]
+    #[test] // 8xy3
     fn test_xor_vx_vy() {
         let mut cpu = CPU::new();
         cpu.registers.v[0xA] = 0x1;
@@ -443,14 +462,94 @@ mod tests {
         assert_eq!(cpu.registers.v[0xA], 0x3);
     }
 
-    #[test]
+    #[test] // 8xy4
+    fn test_8xy4() {
+
+    }
+
+    #[test] // 8xy5
+    fn test_8xy5() {
+
+    }
+
+    #[test] // 8xy6
+    fn test_8xy6() {
+
+    }
+
+    #[test] // 8xy7
+    fn test_8xy7() {
+
+    }
+
+    #[test] // 8xyE
+    fn test_8xyE() {
+
+    }
+
+    #[test] // 9xy0
+    fn test_9xy0() {
+
+    }
+
+    #[test] // Annn
     fn test_set_index_register() {
         let mut cpu = CPU::new();
         cpu.run_opcode(0xA123).expect("opcode error");
         assert_eq!(cpu.registers.i, 0x123);
     }
 
-    #[test]
+    #[test] // Bnnn
+    fn test_Bnnn() {
+
+    }
+
+    #[test] // Cxkk
+    fn test_Cxkk() {
+
+    }
+
+    #[test] // Ex9E
+    fn test_Ex9E() {
+
+    }
+
+    #[test] // ExA1
+    fn test_ExA1() {
+
+    }
+
+    #[test] // Fx07
+    fn test_Fx07() {
+
+    }
+
+    #[test] // Fx0A
+    fn test_Fx0A() {
+
+    }
+
+    #[test] // Fx15
+    fn test_Fx15() {
+
+    }
+
+    #[test] // Fx18
+    fn test_Fx18() {
+
+    }
+
+    #[test] // Fx1E
+    fn test_Fx1E() {
+
+    }
+
+    #[test] // Fx29
+    fn test_set_sprite_loc() {
+
+    }
+
+    #[test] // Fx33
     fn test_store_bcd_repr() {
         let mut cpu = CPU::new();
         cpu.registers.i = 200;
@@ -459,5 +558,34 @@ mod tests {
         assert_eq!(cpu.memory[200], 1);
         assert_eq!(cpu.memory[201], 5);
         assert_eq!(cpu.memory[202], 7);
+    }
+
+    #[test] // Fx55
+    fn test_read_registers() {
+        let mut cpu = CPU::new();
+        cpu.registers.i = 200;
+        for i in 0..16 {
+            cpu.memory[cpu.registers.i + i] = i as u8;
+        }
+
+        cpu.run_opcode(0xFF55).expect("opcode error");
+        for i in 0..16 {
+            assert_eq!(cpu.registers.v[i], i as u8);
+        }
+    }
+
+    #[test] // Fx65
+    fn test_store_registers() {
+        let mut cpu = CPU::new();
+        cpu.registers.i = 200;
+
+        for i in 0..16 {
+            cpu.registers.v[i] = i as u8;
+        }
+
+        cpu.run_opcode(0xFF65).expect("opcode error");
+        for i in 0..16 {
+            assert_eq!(cpu.memory[cpu.registers.i + i], i as u8);
+        }
     }
 }
