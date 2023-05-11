@@ -1,4 +1,5 @@
 extern crate sdl2;
+extern crate core;
 
 use std::{env, fs};
 use std::time::Duration;
@@ -13,21 +14,20 @@ mod bit_utils;
 mod display;
 
 fn main() {
-    let mut rom = "/Users/ruhickey/Downloads/IBM_Logo.ch8";
-
-    for argument in env::args() {
-        if argument == "pong" {
-            rom = "/Users/ruhickey/Downloads/Pong.ch8";
-        }
+    let args: Vec<String> = env::args().collect();
+    if args.len() == 1 {
+        eprintln!("Error: must pass rom");
+        return;
     }
 
+    let path = args[1].to_string();
     let mut chip = cpu::CPU::new();
 
     let font: Vec<u8> = fs::read("./font.ch8")
         .expect("Couldn't read the file");
     chip.load_rom(font, cpu::FONT_OFFSET);
 
-    let rom: Vec<u8> = fs::read(rom)
+    let rom: Vec<u8> = fs::read(path)
         .expect("Couldn't read the file");
     chip.load_rom(rom, cpu::ROM_OFFSET);
 
@@ -46,7 +46,6 @@ fn main() {
         }
 
         let instruction = chip.execute(10);
-
         if instruction == DrawScreen {
             display.draw_screen(chip.screen);
         } else if instruction == Halt {
