@@ -64,6 +64,22 @@ impl CPU {
         }
     }
 
+    pub fn reset_registers(&mut self) {
+        self.registers = Registers {
+            i: 0,
+            pc: ROM_OFFSET,
+            sp: 0,
+            v: [0; 16],
+        };
+
+        self.stack = [0; 16];
+
+        self.timers = Timers {
+            delay: 0,
+            sound: 0
+        };
+    }
+
     pub fn load_rom(&mut self, buffer: Vec<u8>, offset: usize) {
         for (idx, byte) in buffer.into_iter().enumerate() {
             self.memory[idx + offset] = byte;
@@ -141,10 +157,21 @@ impl CPU {
         let vy = nibble_from_short(opcode, 2)?;
 
         if self.registers.v[vx as usize] == self.registers.v[vy as usize] {
-            return Ok(IncrementPc);
+            self.registers.pc += 2;
         }
 
-        return Ok(NoIncrementPc);
+        return Ok(IncrementPc);
+    }
+
+    fn skip_ne_vx_vy(&mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+        let vy = nibble_from_short(opcode, 2)?;
+
+        if self.registers.v[vx as usize] != self.registers.v[vy as usize] {
+            self.registers.pc += 2;
+        }
+
+        return Ok(IncrementPc);
     }
 
     fn add_kk_to_vx(&mut self, opcode: u16) -> Result<STATE, String> {
@@ -193,6 +220,79 @@ impl CPU {
         return Ok(IncrementPc);
     }
 
+    fn add_vx_vy_carry(&mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+        let vy = nibble_from_short(opcode, 2)?;
+
+        let x = self.registers.v[vx as usize];
+        let y = self.registers.v[vy as usize];
+        let sum = x.wrapping_add(y);
+
+        self.registers.v[vx as usize] = sum;
+
+        if sum < x && sum < y {
+            self.registers.v[0xF] = 1;
+        } else {
+            self.registers.v[0xF] = 0;
+        }
+
+        return Ok(IncrementPc);
+    }
+
+    fn sub_vx_vy_overflow(&mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+        let vy = nibble_from_short(opcode, 2)?;
+
+        let x = self.registers.v[vx as usize];
+        let y = self.registers.v[vy as usize];
+
+        self.registers.v[vx as usize] = x.wrapping_sub(y);
+
+        if x > y {
+            self.registers.v[0xF] = 1;
+        } else {
+            self.registers.v[0xF] = 0;
+        }
+
+        return Ok(IncrementPc);
+    }
+
+    fn sub_vy_yx_overflow(&mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+        let vy = nibble_from_short(opcode, 2)?;
+
+        let x = self.registers.v[vx as usize];
+        let y = self.registers.v[vy as usize];
+
+        self.registers.v[vx as usize] = y.wrapping_sub(x);
+
+        if y > x {
+            self.registers.v[0xF] = 1;
+        } else {
+            self.registers.v[0xF] = 0;
+        }
+
+        return Ok(IncrementPc);
+    }
+
+    fn bit_shift_right(& mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+
+        self.registers.v[0xF] = self.registers.v[vx as usize] & 0x1;
+        self.registers.v[vx as usize] = self.registers.v[vx as usize] >> 1;
+
+        return Ok(IncrementPc);
+    }
+
+    fn bit_shift_left(& mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+
+        self.registers.v[0xF] = (self.registers.v[vx as usize] >> 7) & 0x1;
+        self.registers.v[vx as usize] = self.registers.v[vx as usize] << 1;
+
+        return Ok(IncrementPc);
+    }
+
     fn bit_ops_vx_vy(&mut self, opcode: u16) -> Result<STATE, String> {
         let op = nibble_from_short(opcode, 3)?;
 
@@ -201,6 +301,11 @@ impl CPU {
             0x1 => self.or_vx_vy(opcode),
             0x2 => self.and_vx_vy(opcode),
             0x3 => self.xor_vx_vy(opcode),
+            0x4 => self.add_vx_vy_carry(opcode),
+            0x5 => self.sub_vx_vy_overflow(opcode),
+            0x6 => self.bit_shift_right(opcode),
+            0x7 => self.sub_vy_yx_overflow(opcode),
+            0xE => self.bit_shift_left(opcode),
             _ => return Err(format!("unknown bit ops code: 0x{:X}", op))
         };
 
@@ -307,7 +412,7 @@ impl CPU {
             0x6 => self.set_vx_to_kk(opcode),
             0x7 => self.add_kk_to_vx(opcode),
             0x8 => self.bit_ops_vx_vy(opcode),
-            0x9 => self.unknown_opcode(opcode),
+            0x9 => self.skip_ne_vx_vy(opcode),
             0xA => self.set_index_register(opcode),
             0xB => self.unknown_opcode(opcode),
             0xC => self.unknown_opcode(opcode),
@@ -410,15 +515,17 @@ mod tests {
     #[test] // 5xy0
     fn test_skip_vx_equal_vy() {
         let mut cpu = CPU::new();
+        let mut current_pc = cpu.registers.pc;
         cpu.registers.v[0xA] = 0xCC;
         cpu.registers.v[0xB] = 0xCC;
         cpu.registers.v[0xC] = 0x00;
 
-        let mut increment = cpu.run_opcode(0x5AB0).expect("opcode error");
-        assert_eq!(increment, IncrementPc);
+        cpu.run_opcode(0x5AB0).expect("opcode error");
+        assert_eq!(cpu.registers.pc, current_pc + 2);
 
-        increment = cpu.run_opcode(0x5AC0).expect("opcode error");
-        assert_eq!(increment, NoIncrementPc);
+        current_pc = cpu.registers.pc;
+        cpu.run_opcode(0x5AC0).expect("opcode error");
+        assert_eq!(cpu.registers.pc, current_pc);
     }
 
     #[test] // 6xkk
@@ -472,33 +579,102 @@ mod tests {
     }
 
     #[test] // 8xy4
-    fn test_8xy4() {
+    fn test_sum_carry_flag() {
+        let mut cpu = CPU::new();
+        // Make sure the carry flag gets set
+        cpu.registers.v[0xA] = 0x8F;
+        cpu.registers.v[0xB] = 0x8F;
+        cpu.run_opcode(0x8AB4).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0x1E);
+        assert_eq!(cpu.registers.v[0xF], 0x1);
 
+        // Make sure the carry flag doesn't get set
+        cpu.reset_registers();
+        cpu.registers.v[0xA] = 0x78;
+        cpu.registers.v[0xB] = 0x78;
+        cpu.run_opcode(0x8AB4).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0xF0);
+        assert_eq!(cpu.registers.v[0xF], 0x0);
     }
 
     #[test] // 8xy5
-    fn test_8xy5() {
+    fn test_sub_vx_vy_not_borrow() {
+        let mut cpu = CPU::new();
+        cpu.registers.v[0xA] = 0x8F;
+        cpu.registers.v[0xB] = 0x8A;
+        cpu.run_opcode(0x8AB5).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0x5);
+        assert_eq!(cpu.registers.v[0xF], 0x1);
 
+        cpu.reset_registers();
+        cpu.registers.v[0xA] = 0x8A;
+        cpu.registers.v[0xB] = 0x8F;
+        cpu.run_opcode(0x8AB5).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0xFB);
+        assert_eq!(cpu.registers.v[0xF], 0x0);
     }
 
     #[test] // 8xy6
-    fn test_8xy6() {
+    fn test_bit_shift_right() {
+        let mut cpu = CPU::new();
+        cpu.registers.v[0xA] = 0b11010100;
+        cpu.run_opcode(0x8A06).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0b01101010);
+        assert_eq!(cpu.registers.v[0xF], 0x0);
 
+        cpu.reset_registers();
+        cpu.registers.v[0xA] = 0b11010101;
+        cpu.run_opcode(0x8A06).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0b01101010);
+        assert_eq!(cpu.registers.v[0xF], 0x1);
     }
 
     #[test] // 8xy7
-    fn test_8xy7() {
+    fn test_sub_vy_vx_not_borrow() {
+        let mut cpu = CPU::new();
+        cpu.registers.v[0xA] = 0x8F;
+        cpu.registers.v[0xB] = 0x8A;
+        cpu.run_opcode(0x8AB7).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0xFB);
+        assert_eq!(cpu.registers.v[0xF], 0x0);
 
+        cpu.reset_registers();
+        cpu.registers.v[0xA] = 0x8A;
+        cpu.registers.v[0xB] = 0x8F;
+        cpu.run_opcode(0x8AB7).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0x5);
+        assert_eq!(cpu.registers.v[0xF], 0x1);
     }
 
     #[test] // 8xyE
-    fn test_8xyE() {
+    fn test_bit_shift_left() {
+        let mut cpu = CPU::new();
+        cpu.registers.v[0xA] = 0b10101010;
+        cpu.run_opcode(0x8A0E).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0b01010100);
+        assert_eq!(cpu.registers.v[0xF], 0x1);
 
+        cpu.reset_registers();
+        cpu.registers.v[0xA] = 0b01010100;
+        cpu.run_opcode(0x8A0E).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0b10101000);
+        assert_eq!(cpu.registers.v[0xF], 0x0);
     }
 
     #[test] // 9xy0
-    fn test_9xy0() {
+    fn test_skip_vx_not_vy() {
+        let mut cpu = CPU::new();
+        let mut current_pc = cpu.registers.pc;
+        cpu.registers.v[0xA] = 1;
+        cpu.registers.v[0xB] = 2;
+        cpu.run_opcode(0x9AB0).expect("opcode error");
+        assert_eq!(cpu.registers.pc, current_pc + 2);
 
+        current_pc = cpu.registers.pc;
+        cpu.registers.v[0xA] = 2;
+        cpu.registers.v[0xB] = 2;
+        cpu.run_opcode(0x9AB0).expect("opcode error");
+        assert_eq!(cpu.registers.pc, current_pc);
     }
 
     #[test] // Annn
