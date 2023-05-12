@@ -75,7 +75,7 @@ impl CPU {
     }
 
     fn unknown_opcode(&mut self, opcode: u16) -> Result<STATE, String> {
-        return Err(format!("Unknown opcode: 0x{:0>4X}", opcode));
+        return Err(format!("Unknown opcode: 0x{:04X}", opcode));
     }
 
     fn clear_screen(&mut self) -> Result<STATE, String> {
@@ -89,7 +89,7 @@ impl CPU {
         self.registers.sp -= 1;
         self.registers.pc = self.stack[self.registers.sp];
         self.stack[self.registers.sp] = 0;
-        return Ok(NoIncrementPc);
+        return Ok(IncrementPc);
     }
 
     fn zero_opcode(&mut self, opcode: u16) -> Result<STATE, String> {
@@ -99,7 +99,7 @@ impl CPU {
             return self.return_from_subroutine();
         }
 
-        return Err(format!("unknown zero opcode: 0x{:4>X}", opcode))
+        return Err(format!("unknown zero opcode: 0x{:04X}", opcode))
     }
 
     fn jump_opcode(&mut self, opcode: u16) -> Result<STATE, String> {
@@ -133,7 +133,7 @@ impl CPU {
             return Ok(NoIncrementPc);
         }
 
-        return Err(format!("unknown skip opcode: 0x{:4>X}", opcode))
+        return Err(format!("unknown skip opcode: 0x{:04X}", opcode))
     }
 
     fn skip_if_vx_vy(&mut self, opcode: u16) -> Result<STATE, String> {
@@ -274,12 +274,21 @@ impl CPU {
 
     fn load_routines(&mut self, opcode: u16) -> Result<STATE, String> {
         let op = byte_from_short(opcode, 1)?;
+
         return match op {
+            0x29 => self.set_sprite_loc(opcode),
             0x33 => self.store_bcd_repr(opcode),
             0x55 => self.read_vx_values(opcode),
             0x65 => self.store_vx_values(opcode),
             _ => self.unknown_opcode(opcode)
         }
+    }
+
+    fn set_sprite_loc(&mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+        let char = self.registers.v[vx as usize];
+        self.registers.i = FONT_OFFSET + (5 * char as usize);
+        return Ok(IncrementPc);
     }
 
     fn run_opcode(&mut self, opcode: u16) -> Result<STATE, String> {
@@ -546,7 +555,15 @@ mod tests {
 
     #[test] // Fx29
     fn test_set_sprite_loc() {
+        let mut cpu = CPU::new();
+        cpu.registers.v[0x1] = 0x0;
+        cpu.run_opcode(0xF129).expect("opcode error");
+        assert_eq!(cpu.registers.i, FONT_OFFSET);
 
+        cpu.registers.v[0x1] = 0xA;
+        cpu.run_opcode(0xF129).expect("opcode error");
+        // Each character is 5 bytes, so we add 5 to every byte
+        assert_eq!(cpu.registers.i, FONT_OFFSET + (0xA * 5));
     }
 
     #[test] // Fx33
