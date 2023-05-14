@@ -537,25 +537,27 @@ mod tests {
     #[test] // 3xkk
     fn test_skip_vx_equal() {
         let mut cpu = CPU::new();
+        let pc = cpu.registers.pc;
         cpu.registers.v[0xA] = 0xCC;
 
-        let mut increment = cpu.run_opcode(0x3ACC).expect("opcode error");
-        assert_eq!(increment, IncrementPc);
+        cpu.run_opcode(0x3A00).expect("opcode error");
+        assert_eq!(pc, cpu.registers.pc);
 
-        increment = cpu.run_opcode(0x3ACD).expect("opcode error");
-        assert_eq!(increment, NoIncrementPc);
+        cpu.run_opcode(0x3ACC).expect("opcode error");
+        assert_eq!(pc + 2, cpu.registers.pc);
     }
 
     #[test] // 4xkk
     fn test_skip_vx_not_equal() {
         let mut cpu = CPU::new();
+        let pc = cpu.registers.pc;
         cpu.registers.v[0xA] = 0xCC;
 
-        let mut increment = cpu.run_opcode(0x4ACC).expect("opcode error");
-        assert_eq!(increment, NoIncrementPc);
+        cpu.run_opcode(0x4ACC).expect("opcode error");
+        assert_eq!(pc, cpu.registers.pc);
 
-        increment = cpu.run_opcode(0x4ACD).expect("opcode error");
-        assert_eq!(increment, IncrementPc);
+        cpu.run_opcode(0x4A00).expect("opcode error");
+        assert_eq!(pc + 2, cpu.registers.pc);
     }
 
     #[test] // 5xy0
