@@ -46,6 +46,7 @@ fn main() {
         }
 
         let instruction = chip.execute(10);
+        chip.decrement_delay_timer();
         if instruction == DrawScreen {
             display.draw_screen(chip.screen);
         } else if instruction == Halt {

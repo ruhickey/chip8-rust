@@ -9,6 +9,10 @@ pub const SCREEN_HEIGHT: usize = 32;
 use crate::bit_utils::{byte_from_short, nibble_from_short, short_from_bytes};
 use crate::cpu::STATE::{Halt, IncrementPc, NoIncrementPc, DrawScreen, NoDrawScreen};
 
+extern crate rand;
+
+use rand::Rng;
+
 #[derive(Debug)]
 #[derive(PartialEq)]
 pub enum STATE {
@@ -139,14 +143,14 @@ impl CPU {
 
         if op == 0x3 {
             if self.registers.v[vx as usize] == byte {
-                return Ok(IncrementPc);
+                self.registers.pc += 2;
             }
-            return Ok(NoIncrementPc);
+            return Ok(IncrementPc);
         } else if op == 0x4 {
             if self.registers.v[vx as usize] != byte {
-                return Ok(IncrementPc);
+                self.registers.pc += 2;
             }
-            return Ok(NoIncrementPc);
+            return Ok(IncrementPc);
         }
 
         return Err(format!("unknown skip opcode: 0x{:04X}", opcode))
@@ -377,10 +381,31 @@ impl CPU {
         return Ok(IncrementPc);
     }
 
+    fn set_vx_to_delay(&mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+        self.registers.v[vx as usize] = self.timers.delay;
+        return Ok(IncrementPc);
+    }
+
+    fn set_delay_to_vx(&mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+        self.timers.delay = self.registers.v[vx as usize];
+        return Ok(IncrementPc);
+    }
+
+    fn set_sound_to_vx(&mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+        self.timers.sound = self.registers.v[vx as usize];
+        return Ok(IncrementPc);
+    }
+
     fn load_routines(&mut self, opcode: u16) -> Result<STATE, String> {
         let op = byte_from_short(opcode, 1)?;
 
         return match op {
+            0x07 => self.set_vx_to_delay(opcode),
+            0x15 => self.set_delay_to_vx(opcode),
+            0x18 => self.set_sound_to_vx(opcode),
             0x29 => self.set_sprite_loc(opcode),
             0x33 => self.store_bcd_repr(opcode),
             0x55 => self.read_vx_values(opcode),
@@ -393,6 +418,20 @@ impl CPU {
         let vx = nibble_from_short(opcode, 1)?;
         let char = self.registers.v[vx as usize];
         self.registers.i = FONT_OFFSET + (5 * char as usize);
+        return Ok(IncrementPc);
+    }
+
+    fn jump_nnn_v0(&mut self, opcode: u16) -> Result<STATE, String> {
+        self.registers.pc = (opcode & 0xFFF) as usize;
+        self.registers.pc += self.registers.v[0x0] as usize;
+        return Ok(IncrementPc);
+    }
+
+    fn random_u8_masked(&mut self, opcode: u16) -> Result<STATE, String> {
+        let vx = nibble_from_short(opcode, 1)?;
+        let mask = byte_from_short(opcode, 1)?;
+        let rand_num: u8 = rand::thread_rng().gen();
+        self.registers.v[vx as usize] = rand_num & mask;
         return Ok(IncrementPc);
     }
 
@@ -414,12 +453,18 @@ impl CPU {
             0x8 => self.bit_ops_vx_vy(opcode),
             0x9 => self.skip_ne_vx_vy(opcode),
             0xA => self.set_index_register(opcode),
-            0xB => self.unknown_opcode(opcode),
-            0xC => self.unknown_opcode(opcode),
+            0xB => self.jump_nnn_v0(opcode),
+            0xC => self.random_u8_masked(opcode),
             0xD => self.draw_sprite(opcode),
             0xE => self.unknown_opcode(opcode),
             0xF => self.load_routines(opcode),
             _ => self.unknown_opcode(opcode)
+        }
+    }
+
+    pub fn decrement_delay_timer(&mut self) {
+        if self.timers.delay > 0 {
+            self.timers.delay -= 1;
         }
     }
 
@@ -430,6 +475,7 @@ impl CPU {
     pub fn execute(&mut self, n: u32) -> STATE {
         for _ in 0..n {
             let opcode = self.get_next_opcode().expect("opcode error");
+            println!("0x{:04X}", opcode);
             match self.run_opcode(opcode) {
                 Ok(state) => {
                     match state {
@@ -685,13 +731,11 @@ mod tests {
     }
 
     #[test] // Bnnn
-    fn test_Bnnn() {
-
-    }
-
-    #[test] // Cxkk
-    fn test_Cxkk() {
-
+    fn test_jump_nnn_v0() {
+        let mut cpu = CPU::new();
+        cpu.registers.v[0x0] = 0x10;
+        cpu.run_opcode(0xB120).expect("opcode error");
+        assert_eq!(cpu.registers.pc, 0x130);
     }
 
     #[test] // Ex9E
@@ -705,8 +749,11 @@ mod tests {
     }
 
     #[test] // Fx07
-    fn test_Fx07() {
-
+    fn test_vx_as_delay() {
+        let mut cpu = CPU::new();
+        cpu.timers.delay = 0xBE;
+        cpu.run_opcode(0xFA07).expect("opcode error");
+        assert_eq!(cpu.registers.v[0xA], 0xBE);
     }
 
     #[test] // Fx0A
@@ -715,13 +762,19 @@ mod tests {
     }
 
     #[test] // Fx15
-    fn test_Fx15() {
-
+    fn test_delay_as_vx() {
+        let mut cpu = CPU::new();
+        cpu.registers.v[0xA] = 0xBE;
+        cpu.run_opcode(0xFA15).expect("opcode error");
+        assert_eq!(cpu.timers.delay, 0xBE);
     }
 
     #[test] // Fx18
-    fn test_Fx18() {
-
+    fn test_sound_as_vx() {
+        let mut cpu = CPU::new();
+        cpu.registers.v[0xA] = 0xBE;
+        cpu.run_opcode(0xFA18).expect("opcode error");
+        assert_eq!(cpu.timers.sound, 0xBE);
     }
 
     #[test] // Fx1E
